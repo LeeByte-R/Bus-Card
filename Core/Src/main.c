@@ -66,8 +66,8 @@ typedef struct{   // default store in sector1
   FareType type;                             // block 1 [4] regular or half fare, 0x00 regular, 0x01 half, 2~255 other
   int get_on_station;                       // block 1 [5:8] bytes, get_on_station if -1 then did not get on
                                             // block 1 [9:15] reserved
-  Direction direction;                      // block 2 [1] departure('>') or return('>')
-  uint8_t route_name[ROUTE_NAME_SIZE];      // block 2 [2:15], route name consists of 14 character at most
+  Direction direction;                      // block 2 [0] departure('>') or return('>')
+  uint8_t route_name[ROUTE_NAME_SIZE];      // block 2 [1:15], route name consists of 15 character at most
 } Passenger;
 /* USER CODE END PTD */
 
