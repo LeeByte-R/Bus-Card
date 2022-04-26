@@ -32,15 +32,20 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+#define STATION_SIZE 16
 #define ROUTE_NAME_SIZE 15
 #define NAME_SIZE       16
 #define BLOCK_SIZE      16
 
-typedef enum{
-  REGULAR = 0,
-  HALF,
-  OTHER
-} FareType;
+// fare type
+#define REGULAR 0x00
+#define HALF    0x01
+#define OTHER   0x02
+
+// direction symbol in card
+#define CLEAR     0x00
+#define DEPARTURE '>'
+#define RETURN    '<'
 
 typedef enum{
   GETON,
@@ -54,26 +59,20 @@ typedef enum{
   ROUTESTATION
 } PrintCode;
 
-typedef enum{
-  CLEAR     = 0x00,
-  DEPARTURE = '>',
-  RETURN    = '<'
-} Direction;
-
 typedef struct{   // default store in sector1
-  uint8_t name[NAME_SIZE];                  // block 0 [0:15] bytes, name consists of 15 character at most
-  int money;                                // block 1 [0:3] remains in PICC
-  FareType type;                             // block 1 [4] regular or half fare, 0x00 regular, 0x01 half, 2~255 other
-  int get_on_station;                       // block 1 [5:8] bytes, get_on_station if -1 then did not get on
-                                            // block 1 [9:15] reserved
-  Direction direction;                      // block 2 [0] departure('>') or return('>')
-  uint8_t route_name[ROUTE_NAME_SIZE];      // block 2 [1:15], route name consists of 15 character at most
+  uint8_t name[NAME_SIZE];                  // block 0 [0:15]  card user name consists of 15 character at most
+  int money;                                // block 1 [0:3]   remains in PICC
+  int get_on_station;                       // block 1 [5:8]   get_on_station number if -1 then did not get on
+  uint8_t type;                             // block 1 [4]     regular or half fare, 0x00 regular, 0x01 half
+  uint8_t padding[7];                       // block 1 [9:15]  reserved
+  uint8_t direction;                        // block 2 [0]     get on departure('>') or return('>'), get off = 0x00 
+  uint8_t route_name[ROUTE_NAME_SIZE];      // block 2 [1:15]  route name consists of 14 character at most
 } Passenger;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define STATION_SIZE 16
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -98,11 +97,11 @@ int base_fare;
 int base_half_fare;
 
 uint8_t route_name[ROUTE_NAME_SIZE];    // route name consists of 9 character at most
-uint8_t *route;         // each station on route uint8_t [16]
+uint8_t *route;         // each station on route uint8_t[16]
 int station_n;          // how many stations on route
 
 int now_station;        // bus now station
-Direction direction;    // departure or return
+uint8_t direction;    // departure or return
 StatusCode status;
 int fare_money;         // passenger's fare
 
@@ -625,6 +624,7 @@ static void MX_GPIO_Init(void)
 bool Read_Passenger(Passenger *pas, int sector){
   uint8_t size = 18;
   uint8_t buffer[size];
+  uint8_t *p = (uint8_t *)pas;
   
   status = MIFARE_Read(sector * 4 + 0, buffer, &size);
   if (status != STATUS_OK) {
@@ -632,7 +632,7 @@ bool Read_Passenger(Passenger *pas, int sector){
     printf("read name failed: %s\r\n", s);
     return false;
   }
-  memcpy(pas->name, buffer, 16);
+  memcpy(p, buffer, 16);
   
   status = MIFARE_Read(sector * 4 + 1, buffer, &size);
   if (status != STATUS_OK) {
@@ -640,10 +640,7 @@ bool Read_Passenger(Passenger *pas, int sector){
     printf("read card information failed: %s\r\n", s);
     return false;
   }
-  // money(int type) consists of first 4 bytes 0~3, 0 bytes is MSB.
-  pas->money = (uint32_t)buffer[0] << 24 | (uint32_t)buffer[1] << 16 | (uint32_t)buffer[2] << 8 | (uint32_t)buffer[3];
-  pas->type = (FareType)buffer[4];
-  pas->get_on_station = (uint32_t)buffer[5] << 24 | (uint32_t)buffer[6] << 16 | (uint32_t)buffer[7] << 8 | (uint32_t)buffer[8];
+  memcpy(p+16, buffer, 16);
   
   status = MIFARE_Read(sector * 4 + 2, buffer, &size);
   if (status != STATUS_OK) {
@@ -651,44 +648,29 @@ bool Read_Passenger(Passenger *pas, int sector){
     printf("read route name failed: %s\r\n", s);
     return false;
   }
-  pas->direction = (Direction)buffer[0];
-  memcpy(pas->route_name, &buffer[1], ROUTE_NAME_SIZE);
+  memcpy(p+16, buffer, 16);
   
   return true;
 }
 bool Write_Passenger(Passenger *pas, int sector){
   uint8_t size = 16;
-  uint8_t buffer[size];
+  uint8_t *p = (uint8_t *)pas;
   
-  status = MIFARE_Write(sector * 4 + 0, pas->name, size);
+  status = MIFARE_Write(sector * 4 + 0, p, size);
   if (status != STATUS_OK) {
     GetStatusCodeName(status, s, &n);
     printf("write name failed: %s\r\n", s);
     return false;
   }
-  
-  buffer[0] = (uint8_t)((pas->money >> 24) & 0xFF); //MSB is in buffer[0]
-  buffer[1] = (uint8_t)((pas->money >> 16) & 0xFF);
-  buffer[2] = (uint8_t)((pas->money >> 8) & 0xFF);
-  buffer[3] = (uint8_t)(pas->money & 0xFF);
-  
-  buffer[4] = (uint8_t)pas->type;
-  
-  buffer[5] = (uint8_t)((pas->get_on_station >> 24) & 0xFF); //MSB is in buffer[0]
-  buffer[6] = (uint8_t)((pas->get_on_station >> 16) & 0xFF);
-  buffer[7] = (uint8_t)((pas->get_on_station >> 8) & 0xFF);
-  buffer[8] = (uint8_t)(pas->get_on_station & 0xFF);
-  
-  status = MIFARE_Write(sector * 4 + 1, buffer, size);
+
+  status = MIFARE_Write(sector * 4 + 1, p+16, size);
   if (status != STATUS_OK) {
     GetStatusCodeName(status, s, &n);
     printf("write card infromation failed: %s\r\n", s);
     return false;
   }
-  
-  buffer[0] = (uint8_t)pas->direction;
-  memcpy(&buffer[1], pas->route_name, ROUTE_NAME_SIZE);
-  status = MIFARE_Write(sector * 4 + 2, buffer, size);
+
+  status = MIFARE_Write(sector * 4 + 2, p+32, size);
   if (status != STATUS_OK) {
     GetStatusCodeName(status, s, &n);
     printf("write route name failed: %s\r\n", s);
